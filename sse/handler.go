@@ -33,6 +33,9 @@ type send_event struct {
 	reply chan error
 }
 
+// Hijack the http.ResponseWriter. The Content-Type header is set to
+// text/event-stream and the status code is set to 200.
+// The caller is responsible for Closing the EventWriter.
 func Hijack(w http.ResponseWriter) (EventWriter, error) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(200)
