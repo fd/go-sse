@@ -1,6 +1,7 @@
 package sse
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -20,52 +21,46 @@ func (e *Event) is_zero() bool {
 
 func (e *Event) write_to(w io.Writer) (int, error) {
 	var (
+		buf bytes.Buffer
 		err error
-		n   int
-		m   int
 	)
 
 	if e.is_zero() {
-		return n, nil
+		return 0, nil
 	}
 
 	if e.Id != "" {
-		m, err = fmt.Fprintf(w, "id: %s\n", e.Id)
-		n += m
+		_, err = fmt.Fprintf(&buf, "id: %s\n", e.Id)
 		if err != nil {
-			return n, err
+			return 0, err
 		}
 	}
 
 	if e.Type != "" {
-		m, err = fmt.Fprintf(w, "event: %s\n", e.Type)
-		n += m
+		_, err = fmt.Fprintf(&buf, "event: %s\n", e.Type)
 		if err != nil {
-			return n, err
+			return 0, err
 		}
 	}
 
 	if e.Retry > 0 {
-		m, err = fmt.Fprintf(w, "retry: %d\n", e.Retry/time.Millisecond)
-		n += m
+		_, err = fmt.Fprintf(&buf, "retry: %d\n", e.Retry/time.Millisecond)
 		if err != nil {
-			return n, err
+			return 0, err
 		}
 	}
 
 	for _, line := range strings.Split(e.Data, "\n") {
-		m, err = fmt.Fprintf(w, "data: %s\n", line)
-		n += m
+		_, err = fmt.Fprintf(&buf, "data: %s\n", line)
 		if err != nil {
-			return n, err
+			return 0, err
 		}
 	}
 
-	m, err = fmt.Fprint(w, "\n")
-	n += m
+	_, err = fmt.Fprint(&buf, "\n")
 	if err != nil {
-		return n, err
+		return 0, err
 	}
 
-	return n, nil
+	return w.Write(buf.Bytes())
 }
