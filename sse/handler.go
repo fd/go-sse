@@ -16,7 +16,7 @@ var keep_alive_payload = []byte(":keep-alive\n" +
 	":xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\n")
 
 type EventWriter interface {
-	Send(event *Event) error
+	Write(event *Event) error
 	Close() error
 }
 
@@ -26,6 +26,7 @@ type event_writer_t struct {
 	chunk_writer io.WriteCloser
 	events       chan send_event
 	closed       chan chan error
+	err          error
 }
 
 type send_event struct {
@@ -60,12 +61,12 @@ func Hijack(w http.ResponseWriter) (EventWriter, error) {
 	return ew, nil
 }
 
-func (ew *event_writer_t) Send(event *Event) error {
+func (ew *event_writer_t) Write(event *Event) error {
 	c := make(chan error)
 	ew.events <- send_event{event, c}
 	return <-c
-
 }
+
 func (ew *event_writer_t) Close() error {
 	c := make(chan error)
 	ew.closed <- c
@@ -75,8 +76,16 @@ func (ew *event_writer_t) Close() error {
 func (ew *event_writer_t) loop() {
 	var (
 		next_keep_alive = time.NewTicker(1 * time.Second)
-		zero            = make([]byte, 1)
 	)
+
+	defer func() {
+		next_keep_alive.Stop()
+		ew.chunk_writer.Close()
+		ew.buf_writer.Flush()
+		ew.conn.Close()
+		close(ew.closed)
+		close(ew.events)
+	}()
 
 	for {
 		var (
@@ -89,39 +98,72 @@ func (ew *event_writer_t) loop() {
 		select {
 
 		case req := <-ew.closed:
-			next_keep_alive.Stop()
-			ew.chunk_writer.Close()
-			ew.buf_writer.Flush()
-			ew.conn.Close()
-			close(ew.closed)
-			close(ew.events)
-			req <- nil
+			req <- ew.err
 			return
 
 		case req := <-ew.events:
-			err = req.event.write_to(ew.chunk_writer)
+			err = ew.write_event(req.event)
 			if err == io.EOF {
 				go ew.Close()
 			}
 
-			err = ew.buf_writer.Flush()
-			if err == io.EOF {
-				go ew.Close()
-			}
 			req.reply <- err
 
 		case <-next_keep_alive.C:
-			ew.conn.SetReadDeadline(now)
-			if _, err := ew.conn.Read(zero); err == io.EOF {
-				go ew.Close()
-			}
-
-			_, err = ew.chunk_writer.Write(keep_alive_payload)
+			err = ew.write_keep_alive()
 			if err == io.EOF {
 				go ew.Close()
 			}
-			ew.buf_writer.Flush()
+			ew.err = err
 
 		}
 	}
+}
+
+func (ew *event_writer_t) write_event(event *Event) error {
+	var (
+		err error
+	)
+
+	// write the message
+	err = event.write_to(ew.chunk_writer)
+	if err != nil {
+		return err
+	}
+
+	// flush the buffer
+	err = ew.buf_writer.Flush()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (ew *event_writer_t) write_keep_alive() error {
+	var (
+		now  = time.Now()
+		zero = make([]byte, 1)
+		err  error
+	)
+
+	// did the client hang up?
+	ew.conn.SetReadDeadline(now)
+	if _, err := ew.conn.Read(zero); err == io.EOF {
+		return err
+	}
+
+	// send the keep alive
+	_, err = ew.chunk_writer.Write(keep_alive_payload)
+	if err != nil {
+		return err
+	}
+
+	// flush the buffer
+	err = ew.buf_writer.Flush()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
