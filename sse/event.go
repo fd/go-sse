@@ -14,7 +14,7 @@ type Event struct {
 	Retry time.Duration
 }
 
-func (e *Event) IsZero() bool {
+func (e *Event) is_zero() bool {
 	return e.Id == "" && e.Type == "" && e.Data == "" && e.Retry == 0
 }
 
@@ -23,7 +23,7 @@ func (e *Event) write_to(w io.Writer) error {
 		err error
 	)
 
-	if e.IsZero() {
+	if e.is_zero() {
 		return nil
 	}
 
