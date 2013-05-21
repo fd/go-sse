@@ -18,47 +18,54 @@ func (e *Event) is_zero() bool {
 	return e.Id == "" && e.Type == "" && e.Data == "" && e.Retry == 0
 }
 
-func (e *Event) write_to(w io.Writer) error {
+func (e *Event) write_to(w io.Writer) (int, error) {
 	var (
 		err error
+		n   int
+		m   int
 	)
 
 	if e.is_zero() {
-		return nil
+		return n, nil
 	}
 
 	if e.Id != "" {
-		_, err = fmt.Fprintf(w, "id: %s\n", e.Id)
+		m, err = fmt.Fprintf(w, "id: %s\n", e.Id)
+		n += m
 		if err != nil {
-			return err
+			return n, err
 		}
 	}
 
 	if e.Type != "" {
-		_, err = fmt.Fprintf(w, "event: %s\n", e.Type)
+		m, err = fmt.Fprintf(w, "event: %s\n", e.Type)
+		n += m
 		if err != nil {
-			return err
+			return n, err
 		}
 	}
 
 	if e.Retry > 0 {
-		_, err = fmt.Fprintf(w, "retry: %d\n", e.Retry/time.Millisecond)
+		m, err = fmt.Fprintf(w, "retry: %d\n", e.Retry/time.Millisecond)
+		n += m
 		if err != nil {
-			return err
+			return n, err
 		}
 	}
 
 	for _, line := range strings.Split(e.Data, "\n") {
-		_, err = fmt.Fprintf(w, "data: %s\n", line)
+		m, err = fmt.Fprintf(w, "data: %s\n", line)
+		n += m
 		if err != nil {
-			return err
+			return n, err
 		}
 	}
 
-	_, err = fmt.Fprint(w, "\n")
+	m, err = fmt.Fprint(w, "\n")
+	n += m
 	if err != nil {
-		return err
+		return n, err
 	}
 
-	return nil
+	return n, nil
 }

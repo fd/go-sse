@@ -16,28 +16,35 @@ var keep_alive_payload = []byte(":keep-alive\n" +
 	":xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\n")
 
 type EventWriter interface {
-	Write(event *Event) error
+	LastEventID() string
+	Write(event *Event) (n int, err error)
 	Close() error
 }
 
 type event_writer_t struct {
+	last_id      string
 	conn         net.Conn
 	buf_writer   *bufio.ReadWriter
 	chunk_writer io.WriteCloser
-	events       chan send_event
+	events       chan write_event_req
 	closed       chan chan error
 	err          error
 }
 
-type send_event struct {
+type write_event_req struct {
 	event *Event
-	reply chan error
+	reply chan write_event_res
+}
+
+type write_event_res struct {
+	n   int
+	err error
 }
 
 // Hijack the http.ResponseWriter. The Content-Type header is set to
 // text/event-stream and the status code is set to 200.
 // The caller is responsible for Closing the EventWriter.
-func Hijack(w http.ResponseWriter) (EventWriter, error) {
+func Hijack(w http.ResponseWriter, req *http.Request) (EventWriter, error) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(200)
 
@@ -49,10 +56,11 @@ func Hijack(w http.ResponseWriter) (EventWriter, error) {
 	bufrw.Flush()
 
 	ew := &event_writer_t{
+		last_id:      req.Header.Get("Last-Event-ID"),
 		conn:         conn,
 		buf_writer:   bufrw,
 		chunk_writer: httputil.NewChunkedWriter(bufrw),
-		events:       make(chan send_event),
+		events:       make(chan write_event_req),
 		closed:       make(chan chan error),
 	}
 
@@ -61,10 +69,15 @@ func Hijack(w http.ResponseWriter) (EventWriter, error) {
 	return ew, nil
 }
 
-func (ew *event_writer_t) Write(event *Event) error {
-	c := make(chan error)
-	ew.events <- send_event{event, c}
-	return <-c
+func (ew *event_writer_t) LastEventID() string {
+	return ew.last_id
+}
+
+func (ew *event_writer_t) Write(event *Event) (int, error) {
+	c := make(chan write_event_res)
+	ew.events <- write_event_req{event, c}
+	res := <-c
+	return res.n, res.err
 }
 
 func (ew *event_writer_t) Close() error {
@@ -90,6 +103,7 @@ func (ew *event_writer_t) loop() {
 	for {
 		var (
 			now = time.Now()
+			n   int
 			err error
 		)
 
@@ -102,12 +116,12 @@ func (ew *event_writer_t) loop() {
 			return
 
 		case req := <-ew.events:
-			err = ew.write_event(req.event)
+			n, err = ew.write_event(req.event)
 			if err == io.EOF {
 				go ew.Close()
 			}
 
-			req.reply <- err
+			req.reply <- write_event_res{n, err}
 
 		case <-next_keep_alive.C:
 			err = ew.write_keep_alive()
@@ -120,24 +134,25 @@ func (ew *event_writer_t) loop() {
 	}
 }
 
-func (ew *event_writer_t) write_event(event *Event) error {
+func (ew *event_writer_t) write_event(event *Event) (int, error) {
 	var (
 		err error
+		n   int
 	)
 
 	// write the message
-	err = event.write_to(ew.chunk_writer)
+	n, err = event.write_to(ew.chunk_writer)
 	if err != nil {
-		return err
+		return n, err
 	}
 
 	// flush the buffer
 	err = ew.buf_writer.Flush()
 	if err != nil {
-		return err
+		return n, err
 	}
 
-	return nil
+	return n, nil
 }
 
 func (ew *event_writer_t) write_keep_alive() error {
