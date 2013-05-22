@@ -23,9 +23,18 @@ func (err *ConnectionError) Error() string {
 }
 
 type EventWriter interface {
+	// When a connection is reopened it will send a send back the id of the
+	// last event it saw.
 	LastEventID() string
+
+	// Write an event to the stream. This will return a ConnectionError when the
+	// stream was closed.
 	Write(event *Event) (n int, err error)
+
+	// Close the stream
 	Close() error
+
+	// Get notified when the underlying connection gets closed.
 	CloseNotify() <-chan bool
 }
 
